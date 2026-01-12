@@ -37,10 +37,12 @@ services:
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka1:29092,PLAINTEXT_HOST://localhost:9092
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: 3
     volumes:
       - kafka1_data:/var/lib/kafka/data
     networks:
@@ -66,10 +68,12 @@ services:
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka2:29092,PLAINTEXT_HOST://localhost:9093
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: 3
     volumes:
       - kafka2_data:/var/lib/kafka/data
     networks:
@@ -95,10 +99,12 @@ services:
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka3:29092,PLAINTEXT_HOST://localhost:9094
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: 3
     volumes:
       - kafka3_data:/var/lib/kafka/data
     networks:
@@ -137,17 +143,17 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_USER: stockuser
-      POSTGRES_PASSWORD: stockpassword
-      POSTGRES_DB: stockdb
-      POSTGRES_MULTIPLE_DATABASES: stockdb,airflow
+      POSTGRES_USER: ecommerceuser
+      POSTGRES_PASSWORD: ecommercepassword
+      POSTGRES_DB: ecommercedb
+      POSTGRES_MULTIPLE_DATABASES: ecommercedb,airflow
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init-scripts:/docker-entrypoint-initdb.d
     networks:
       - ecommerce_pipeline_network
     healthcheck:
-      test: pg_isready -U stockuser -d stockdb
+      test: pg_isready -U ecommerceuser -d ecommercedb
       interval: 10s
       timeout: 5s
       retries: 5
@@ -272,27 +278,27 @@ services:
 #      - ecommerce_pipeline_network
 
   # Airflow PostgreSQL DB 초기화
-  airflow-init:
-    build:
-      context: .
-      dockerfile: Dockerfile.airflow
-    container_name: airflow-init
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
-      - AIRFLOW__CORE__SQL_ALCHEMY_CONN=postgresql+psycopg2://stockuser:stockpassword@postgres/airflow
-      - AIRFLOW__CORE__LOAD_EXAMPLES=false
-      - _AIRFLOW_DB_UPGRADE=true
-      - _AIRFLOW_WWW_USER_CREATE=true
-      - _AIRFLOW_WWW_USER_USERNAME=admin
-      - _AIRFLOW_WWW_USER_PASSWORD=admin
-    command: >
-      bash -c "airflow db migrate && 
-               airflow users create --username admin --firstname admin --lastname admin --role Admin --email admin@example.com --password admin"
-    networks:
-      - ecommerce_pipeline_network
+#  airflow-init:
+#    build:
+#      context: .
+#      dockerfile: Dockerfile.airflow
+#    container_name: airflow-init
+#    depends_on:
+#      postgres:
+#        condition: service_healthy
+#    environment:
+#      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+#      - AIRFLOW__CORE__SQL_ALCHEMY_CONN=postgresql+psycopg2://stockuser:stockpassword@postgres/airflow
+#      - AIRFLOW__CORE__LOAD_EXAMPLES=false
+#      - _AIRFLOW_DB_UPGRADE=true
+#      - _AIRFLOW_WWW_USER_CREATE=true
+#      - _AIRFLOW_WWW_USER_USERNAME=admin
+#      - _AIRFLOW_WWW_USER_PASSWORD=admin
+#    command: >
+#      bash -c "airflow db migrate &&
+#               airflow users create --username admin --firstname admin --lastname admin --role Admin --email admin@example.com --password admin"
+#    networks:
+#      - ecommerce_pipeline_network
 
 #  # Airflow 웹서버
 #  airflow-webserver:
