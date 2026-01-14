@@ -16,4 +16,4 @@ COPY . .
 # 로그 디렉토리 생성
 RUN mkdir -p logs
 
-CMD ["python", "-m", "data_collectors.stock_data_collector"]
+CMD ["python", "-m", "producer.clickstream_producer.py"]

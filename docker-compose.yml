@@ -358,25 +358,24 @@ services:
 #    networks:
 #      - ecommerce_pipeline_network
 #
-#  # 주식 데이터 수집기
-#  stock-data-collector:
-#    build:
-#      context: .
-#      dockerfile: Dockerfile.collector
-#    container_name: stock-data-collector
-#    depends_on:
-#      kafka:
-#        condition: service_healthy
-#    environment:
-#      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
-#      - STOCK_COLLECTION_INTERVAL=300
-#      - PYTHONUNBUFFERED=1
-#    volumes:
-#      - ./:/app
-#      - ./logs:/app/logs
-#    networks:
-#      - ecommerce_pipeline_network
-#    restart: on-failure
+  # 이커머스 클릭스트림 수집기
+  ecommerce-data-collector:
+    build:
+      context: .
+      dockerfile: Dockerfile.collector
+    container_name: ecommerce-data-collector
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./:/app
+      - ./logs:/app/logs
+    networks:
+      - ecommerce_pipeline_network
+    restart: on-failure
 #
 #  # 가격 알림 프로세서
 #  price-alert-processor:

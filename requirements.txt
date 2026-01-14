@@ -1,5 +1,4 @@
 # 데이터 수집
-yfinance==0.2.54
 kafka-python==2.0.2
 python-dotenv==1.0.0
 curl_cffi==0.5.10
