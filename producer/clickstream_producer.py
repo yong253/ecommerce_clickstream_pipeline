@@ -30,7 +30,7 @@ def data_loader(file_path):
 def kafka_send(producer, topic):
     target_tps = 500 # 초당 500건
     batch_group_size = 50 # 한번에 묶어서 쏠 단위
-    file_path = r'' # 임시 파일 경로
+    file_path = r'C:\Users\leeyongseok\ecommerce_clickstream_pipeline\dataset\2019-Oct.csv' # 임시 파일 경로
     # 전송 멈추는 시간. 50/500 = 0.1초
     sleep_interval = batch_group_size / target_tps
     print(f"전송 시작: 초당 {target_tps}건 목표 (간격: {sleep_interval}초)")
