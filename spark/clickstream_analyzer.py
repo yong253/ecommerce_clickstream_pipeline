@@ -1,6 +1,24 @@
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import *
 from pyspark.sql.types import *
+import logging
+
+LOG_FILE_PATH = "/opt/airflow/logs/ecommerce_analyzer.log"
+os.makedirs(os.path.dirname(LOG_FILE_PATH), exist_ok=True)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler(LOG_FILE_PATH)
+    ]
+)
+logger = logging.getLogger("EcommerceAnalyzer")
+
+# 상위 디렉토리를 path에 추가하여 다른 모듈을 import할 수 있도록 함
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from config.config import KAFKA_BOOTSTRAP_SERVERS, ECOMMERCE_TOPIC
 
 '''
 1. spark 세션 초기화
@@ -29,52 +47,60 @@ class ClickstreamAnalyzer:
             .config("spark.sql.shuffle.partitions", "12") \
             .getOrCreate()
 
+    def load_data(self):
 
-# Kafka에서 들어올 원본 JSON 스키마
-raw_schema = StructType([
-    StructField("event_time", StringType(), False),
-    StructField("event_type", StringType(), False),
-    StructField("product_id", IntegerType(), False),
-    StructField("category_id", LongType(), False),
-    StructField("category_code", StringType(), True),
-    StructField("user_id", LongType(), False),
-    StructField("user_session", StringType(), True)
-])
+        # Kafka에서 들어올 원본 JSON 스키마
+        raw_schema = StructType([
+            StructField("event_time", StringType(), False),
+            StructField("event_type", StringType(), False),
+            StructField("product_id", IntegerType(), False),
+            StructField("category_id", LongType(), False),
+            StructField("category_code", StringType(), True),
+            StructField("user_id", LongType(), False),
+            StructField("user_session", StringType(), True)
+        ])
 
-df = spark.readStream \
-    .format("kafka") \
-    .option("kafka.bootstrap.servers", "localhost:9092") \
-    .option("subscribe", "clickstream") \
-    .option("startingOffsets", "latest") \
-    .load()
+        # 실시간 데이터 읽기
+        df = self.spark.readStream \
+            .format("kafka") \
+            .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP_SERVERS) \
+            .option("subscribe", ECOMMERCE_TOPIC) \
+            .option("startingOffsets", "earliest") \
+            .option("maxOffsetsPerTrigger", 50000) \
+            .load()
 
-# JSON 파싱 및 구조 확장
-parsed_df = df.selectExpr("CAST(value AS STRING)") \
-    .select(from_json(col("value"), raw_schema).alias("data")) \
-    .select("data.*")
+        # JSON 파싱 및 구조 확장
+        parsed_df = df.selectExpr("CAST(value AS STRING)") \
+            .select(from_json(col("value"), raw_schema).alias("data")) \
+            .select("data.*")
 
 
-enriched_df = parsed_df \
-    .withColumn("event_time", to_timestamp(col("event_time"))) \
-    .withColumn("year", year(col("event_time"))) \
-    .withColumn("month", month(col("event_time"))) \
-    .withColumn("day", day(col("event_time"))) \
-    .withColumn("category_main", split(col("category_code"), "\.").getItem(0)) \
-    .withColumn("category_main", coalesce(col("category_main"), lit("accessories"))) \
-    .withColumn("event_weight",
-        when(col("event_type") == "view", 1)
-        .when(col("event_type") == "cart", 3)
-        .when(col("event_type") == "purchase", 10)
-        .when(col("event_type") == "remove_from_cart", -3)
-        .otherwise(0))
+        enriched_df = parsed_df \
+            .withColumn("event_time", to_timestamp(col("event_time"))) \
+            .withColumn("year", year(col("event_time"))) \
+            .withColumn("month", month(col("event_time"))) \
+            .withColumn("day", day(col("event_time"))) \
+            .withColumn("category_main", split(col("category_code"), "\.").getItem(0)) \
+            .withColumn("category_main", coalesce(col("category_main"), lit("accessories"))) \
+            .withColumn("event_weight",
+                when(col("event_type") == "view", 1)
+                .when(col("event_type") == "cart", 3)
+                .when(col("event_type") == "purchase", 10)
+                .when(col("event_type") == "remove_from_cart", -3)
+                .otherwise(0))
 
-s3_query = enriched_df.writeStream \
-    .format("parquet") \
-    .option("path", "s3a://my-bucket/silver/enriched_logs/") \
-    .option("checkpointLocation", "s3a://my-bucket/checkpoints/silver/") \
-    .partitionBy("year", "month", "day") \
-    .outputMode("append") \
-    .start()
+        # watermark
+        # deduplication(중복 제거)
+
+        s3_query = enriched_df.writeStream \
+            .format("parquet") \
+            .option("path", "s3a://my-bucket/silver/enriched_logs/") \
+            .option("checkpointLocation", "s3a://my-bucket/checkpoints/silver/") \
+            .partitionBy("year", "month", "day") \
+            .outputMode("append") \
+            .start()
+
+        spark.streams.awaitAnyTermination() # 쿼리가 종료될 때까지 메인 프로그램 대기
 
 import redis
 
@@ -97,4 +123,8 @@ redis_query = enriched_df.writeStream \
     .option("checkpointLocation", "s3a://my-bucket/checkpoints/gold/") \
     .start()
 
-spark.streams.awaitAnyTermination()
+
+
+
+if __name__ == '__main__':
+    analyzer = ClickstreamAnalyzer()
