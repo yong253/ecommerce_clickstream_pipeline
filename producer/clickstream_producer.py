@@ -3,6 +3,26 @@ import json
 import csv
 import time
 import argparse
+import logging
+
+# 1. 로그 디렉토리 및 파일 설정
+log_dir = "logs"
+log_file = os.path.join(log_dir, "ecommerce_collector.log")
+
+# 로그 디렉토리가 없으면 생성
+if not os.path.exists(log_dir):
+    os.makedirs(log_dir)
+
+# 2. 로깅 설정 수정
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),           # 터미널 콘솔 출력용
+        logging.FileHandler(log_file)     # 파일 저장용 (logs/Ecommerce_collector.log)
+    ]
+)
+logger = logging.getLogger("EcommerceCollector")
 
 '''
 1. configuration 설정
@@ -33,7 +53,8 @@ def kafka_send(producer, topic):
     file_path = r'C:\Users\leeyongseok\ecommerce_clickstream_pipeline\dataset\2019-Oct.csv' # 임시 파일 경로
     # 전송 멈추는 시간. 50/500 = 0.1초
     sleep_interval = batch_group_size / target_tps
-    print(f"전송 시작: 초당 {target_tps}건 목표 (간격: {sleep_interval}초)")
+    # print(f"전송 시작: 초당 {target_tps}건 목표 (간격: {sleep_interval}초)")
+    logger.info(f"전송 시작: 초당 {target_tps}건 목표 (간격: {sleep_interval}초)")
 
     count = 0
     for data in data_loader(file_path):
@@ -41,6 +62,7 @@ def kafka_send(producer, topic):
         count += 1
 
         if count % batch_group_size == 0: # 배치 size만큼 보냈으면 잠시 휴식
+            logger.info(f"전송 완료: {count}건, 휴식: {sleep_interval}초")
             time.sleep(sleep_interval)
     producer.flush()
 
