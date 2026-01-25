@@ -2,3 +2,7 @@
 .venv/
 .env
 logs/
+app-*
+airflow-webserver.pid
+airflow.cfg
+webserver_config.py
