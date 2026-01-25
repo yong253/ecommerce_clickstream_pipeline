@@ -1,19 +1,23 @@
 FROM python:3.10-slim
 
-WORKDIR /app
+USER root
 
-# 필요한 패키지 설치
+# 필수 빌드 도구 및 snappy 라이브러리 설치 (공백 주의!)
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends gcc python3-dev && \
+    apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    python3-dev \
+    libsnappy-dev && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
+WORKDIR /app
+
+# requirements.txt에 python-snappy를 명시하세요.
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
 COPY . .
-
-# 로그 디렉토리 생성
-RUN mkdir -p logs
-
-CMD ["python", "-m", "producer.clickstream_producer.py"]
+CMD ["python", "-m", "producer.clickstream_producer"]

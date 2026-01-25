@@ -4,5 +4,5 @@ FROM apache/spark:3.5.0
 USER root
 # pip 설치 및 라이브러리 설치
 RUN pip install --upgrade pip && \
-    pip install python-dotenv pyspark pandas numpy matplotlib scikit-learn kafka-python
+    pip install python-dotenv pyspark pandas numpy kafka-python redis boto3
 USER 185

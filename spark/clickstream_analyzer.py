@@ -1,47 +1,84 @@
 import redis
 import boto3
+import os
+import sys
 from datetime import datetime, timedelta
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, LongType
+import logging
 
+LOG_FILE_PATH = "/app/logs/clickstream_analyzer.log"
+os.makedirs(os.path.dirname(LOG_FILE_PATH), exist_ok=True)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler(LOG_FILE_PATH)
+    ]
+)
+logger = logging.getLogger("ClickstreamAnalyzer")
+
+# 상위 디렉토리를 path에 추가하여 다른 모듈을 import할 수 있도록 함
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from config.config import *
 
 class ClickstreamAnalyzer:
     def __init__(self):
         self.spark = self.create_spark_session()
-        self.redis_host = "localhost"
+        self.redis_host = "redis"
         self.redis_port = 6379
-        self.s3_bucket = "ecommerce-datalake"
+        # S3 데이터 저장 경로 설정
+        self.S3_REFINED_PATH = f"s3a://{REFINED_PATH}" # 1차 변환 데이터
+        self.S3_USER_CAT_SCORE_PATH = f"s3a://{USER_CAT_SCORE_PATH}" # 유저별 카테고리 선호도 집계 데이터 저장 경로
+        self.S3_TOP_PRODUCTS_PATH = f"s3a://{TOP_PRODUCTS_PATH}" # 카테고리별 인기 상품 집계 데이터 저장 경로
+
+        # S3 체크포인트 저장 경로
+        self.S3_CHK_REFINED = f"s3a://{CHK_REFINED}" # 1차 변환 데이터
+        self.S3_CHK_USER_CAT = f"s3a://{CHK_USER_CAT}" # 유저별 카테고리 선호도
+        self.S3_CHK_CAT_PROD = f"s3a://{CHK_CAT_PROD}" # 카테고리별 인기 상품
 
         self.raw_schema = StructType([
-            StructField("event_time", StringType(), False),
-            StructField("event_type", StringType(), False),
-            StructField("product_id", IntegerType(), False),
-            StructField("category_id", LongType(), False),
-            StructField("category_code", StringType(), True),
+            StructField("event_time", StringType(), False), # 이벤트 발생 시간
+            StructField("event_type", StringType(), False), # 이벤트 유형(가중치)
+            StructField("product_id", IntegerType(), False), # 상품 ID
+            StructField("category_id", LongType(), False), # 카테고리 ID
+            StructField("category_code", StringType(), True), # 카테고리 code
             StructField("user_id", LongType(), False),
             StructField("user_session", StringType(), True)
         ])
+        logger.info("ClickstreamAnalyzer 생성기")
 
     def create_spark_session(self):
         """Spark 세션 및 Delta Lake/Kafka 커넥터 설정"""
         return SparkSession.builder \
             .appName("ClickstreamRealtimeEngine") \
             .master("spark://spark-master:7077") \
+            .config("spark.sql.shuffle.partitions", "12") \
             .config("spark.jars.packages", (
             "io.delta:delta-spark_2.12:3.0.0,"
             "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,"
             "org.apache.hadoop:hadoop-aws:3.3.4")) \
             .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
             .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
+            .config("spark.hadoop.fs.s3a.access.key", AWS_ACCESS_KEY_ID) \
+            .config("spark.hadoop.fs.s3a.secret.key", AWS_SECRET_ACCESS_KEY) \
+            .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
+            .config("spark.hadoop.fs.s3a.aws.credentials.provider",
+                    "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider") \
             .getOrCreate()
 
     # --- [1. 입력: 데이터 로드] ---
-    def read_kafka_stream(self, bootstrap_servers, topic):
+    def read_kafka_stream(self):
         """Kafka로부터 실시간 스트림 읽기"""
+        logger.info("read_kafka_stream start ...")
         return self.spark.readStream.format("kafka") \
-            .option("kafka.bootstrap.servers", bootstrap_servers) \
-            .option("subscribe", topic) \
+            .option("kafka.group.id", "spark-analyzer-group") \
+            .option("commitOffsetsOnRead", "true") \
+            .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP_SERVERS) \
+            .option("subscribe", ECOMMERCE_TOPIC) \
             .option("startingOffsets", "earliest") \
             .option("maxOffsetsPerTrigger", 50000) \
             .load() \
@@ -63,86 +100,105 @@ class ClickstreamAnalyzer:
                         .when(F.col("event_type") == "purchase", 10)
                         .when(F.col("event_type") == "remove_from_cart", -3).otherwise(0))
 
-    # --- [3. 출력: S3 Delta 저장] ---
-    def write_to_s3_delta(self, df):
-        """중복 제거 후 S3에 영구 저장"""
-        checkpoint_path = f"s3a://{self.s3_bucket}/checkpoints/refined/"
-        output_path = f"s3a://{self.s3_bucket}/refined/events/"
-
+    def write_refined_to_s3(self, df):
+        """1차 정제 데이터 S3 Delta 저장 (중복 제거 포함)"""
         return df.withWatermark("event_time", "10 minutes") \
             .dropDuplicates(["user_id", "event_time", "product_id", "event_type"]) \
-            .writeStream \
-            .format("delta") \
-            .outputMode("append") \
-            .option("checkpointLocation", checkpoint_path) \
+            .writeStream.format("delta").outputMode("append") \
+            .option("checkpointLocation", self.S3_CHK_REFINED) \
             .partitionBy("year", "month", "day") \
-            .start(output_path)
+            .start(self.S3_REFINED_PATH)
 
-    # --- [4. 출력: Redis 실시간 및 마커 생성] ---
-    def write_to_redis_realtime(self, df):
-        """Redis Today 키 업데이트 및 마감 마커 관리"""
-        checkpoint_path = f"s3a://{self.s3_bucket}/checkpoints/redis-today/"
+    def write_user_pref_to_sinks(self, df):
+        """유저별 선호도 집계 및 Redis/S3 저장"""
+        agg_df = df.withWatermark("event_time", "10 minutes") \
+            .groupBy("user_id", "category_code") \
+            .agg(F.sum("event_weight").alias("total_score"),
+                 F.max("event_time").alias("event_time"))
 
-        return df.writeStream \
-            .foreachBatch(self.save_to_redis_today) \
-            .option("checkpointLocation", checkpoint_path) \
-            .trigger(processingTime='1 minute') \
+        r_host = self.redis_host
+        r_port = self.redis_port
+        def save_batch(batch_df, batch_id):
+            # Redis 업데이트
+            def redis_sync(partition):
+                r = redis.Redis(host=r_host, port=r_port, db=0)
+                pipe = r.pipeline()
+                for row in partition:
+                    key = f"pref:user:{row['user_id']}:today"
+                    pipe.hset(key, row['category_code'], row['total_score'])
+                    pipe.expire(key, 86400)
+                pipe.execute()
+
+            batch_df.foreachPartition(redis_sync)
+
+            # S3 집계 결과 백업
+            batch_df.write.format("delta").mode("append").save(self.S3_USER_CAT_SCORE_PATH)
+
+        return agg_df.writeStream.outputMode("update") \
+            .foreachBatch(save_batch) \
+            .option("checkpointLocation", self.S3_CHK_USER_CAT) \
             .start()
 
-    def save_to_redis_today(self, batch_df, batch_id):
-        """foreachBatch 내부 실행 로직 (Redis Sync & S3 Marker)"""
+    def write_top_products_to_sinks(self, df):
+        """카테고리별 상품 순위 집계 및 Redis/S3 저장"""
+        agg_df = df.withWatermark("event_time", "10 minutes") \
+            .groupBy("category_code", "product_id") \
+            .agg(F.sum("event_weight").alias("pop_score"),
+                 F.max("event_time").alias("event_time"))
+        r_host = self.redis_host
+        r_port = self.redis_port
+        def save_batch(batch_df, batch_id):
+            # Redis 업데이트
+            def redis_sync(partition):
+                r = redis.Redis(host=r_host, port=r_port, db=0)
+                pipe = r.pipeline()
+                for row in partition:
+                    key = f"cat:rank:{row['category_code']}:today"
+                    pipe.zadd(key, {str(row['product_id']): row['pop_score']})
+                    pipe.expire(key, 86400)
+                pipe.execute()
 
-        # Redis 증분 업데이트 (Today용)
-        def redis_sync(partition):
-            r = redis.Redis(host=self.redis_host, port=self.redis_port, db=0)
-            pipe = r.pipeline()
-            for row in partition:
-                u_key = f"pref:user:{row['user_id']}:today"
-                pipe.hincrbyfloat(u_key, row['category_code'], row['event_weight'])
-                pipe.expire(u_key, 86400)
+            batch_df.foreachPartition(redis_sync)
 
-                r_key = f"cat:rank:{row['category_code']}:today"
-                pipe.zincrby(r_key, row['event_weight'], str(row['product_id']))
-                pipe.expire(r_key, 86400)
-            pipe.execute()
+            # S3 집계 결과 백업
+            batch_df.write.format("delta").mode("append").save(self.S3_TOP_PRODUCTS_PATH)
 
-        batch_df.foreachPartition(redis_sync)
+            # 마감 마커 생성 체크
+            self.check_and_write_s3_marker(batch_df)
 
-        # S3 마커 생성 체크
-        self.check_and_write_s3_marker(batch_df)
+        return agg_df.writeStream.outputMode("update") \
+            .foreachBatch(save_batch) \
+            .option("checkpointLocation", self.S3_CHK_CAT_PROD) \
+            .start()
 
     def check_and_write_s3_marker(self, batch_df):
-        """데이터 시간에 따른 마감 마커 파일 생성"""
+        """S3 마감 마커 파일 (.done) 생성"""
         max_time_row = batch_df.select(F.max("event_time")).collect()
         if max_time_row and max_time_row[0][0]:
             current_max = max_time_row[0][0]
             yesterday = (current_max - timedelta(days=1)).strftime("%Y-%m-%d")
-            safe_threshold = current_max - timedelta(minutes=10)  # 워터마크 고려
-
-            if safe_threshold.date() >= current_max.date():
+            # 10분 워터마크 기준 날짜가 완전히 넘어갔는지 확인
+            if (current_max - timedelta(minutes=10)).date() >= current_max.date():
                 s3 = boto3.client('s3')
-                marker_key = f"status/streaming_done_{yesterday}.done"
-                s3.put_object(Bucket=self.s3_bucket, Key=marker_key, Body='')
+                # 마커는 보통 refined 폴더의 상위 status 폴더에 둡니다.
+                bucket = self.S3_REFINED_PATH.split("/")[2]
+                s3.put_object(Bucket=bucket, Key=f"status/streaming_done_{yesterday}.done", Body='')
 
-    # --- [5. 메인 컨트롤러] ---
+    # --- [Step 3: 실행 컨트롤러] ---
     def run(self):
-        """전체 파이프라인 가동"""
-        print("Initializing E-commerce Real-time Pipeline...")
+        logger.info("실시간 파이프라인 가동...")
 
-        # 1. 데이터 소스 연결
-        raw_stream = self.read_kafka_stream("localhost:9092", "clickstream")
+        # 1. 원본 스트림 로드 및 공통 정제
+        stream_df = self.read_kafka_stream()
+        enriched_df = self.transform(stream_df)
 
-        # 2. 공통 변환 로직 적용
-        enriched_stream = self.transform(raw_stream)
+        # 2. 독립적인 3개의 Sink 스트림 실행
+        raw_query = self.write_refined_to_s3(enriched_df)
+        user_query = self.write_user_pref_to_sinks(enriched_df)
+        logger.info("유저별 선호도 집계 및 Redis/S3 저장")
+        rank_query = self.write_top_products_to_sinks(enriched_df)
+        logger.info("카테고리별 상품 순위 집계 및 Redis/S3 저장")
 
-        # 3. 각 Sink(저장소)로 스트리밍 시작
-        print("Starting S3 Archiving Stream...")
-        s3_query = self.write_to_s3_delta(enriched_stream)
-
-        print("Starting Redis Real-time & Marker Stream...")
-        redis_query = self.write_to_redis_realtime(enriched_stream)
-
-        # 4. 모든 쿼리가 종료될 때까지 대기
         self.spark.streams.awaitAnyTermination()
 
 

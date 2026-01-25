@@ -1,0 +1,54 @@
+FROM apache/spark:3.5.0
+
+USER root
+
+# 1. Snappy 및 빌드 필수 도구 설치
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    python3-dev \
+    libsnappy-dev && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# 2. pip 업그레이드
+RUN pip install --no-cache-dir --upgrade pip
+
+# 3. 라이브러리 설치
+RUN pip install --no-cache-dir \
+    python-dotenv \
+    pyspark==3.5.0 \
+    pandas \
+    numpy \
+    kafka-python==2.0.2 \
+    python-snappy==0.7.3 \
+    redis==4.5.5 \
+    boto3==1.28.17 \
+    botocore==1.31.17 \
+    delta-spark==3.0.0
+
+RUN mkdir -p /home/spark/.ivy2/cache /home/spark/.ivy2/jars /app/logs /app/checkpoints /opt/spark/ivy_cache && \
+    chown -R 185:185 /home/spark /app /opt/spark/ivy_cache && \
+    chmod -R 775 /home/spark /app /opt/spark/ivy_cache
+
+# 5. 소스 복사 및 작업 디렉토리 설정
+WORKDIR /opt/spark/work
+COPY . .
+
+# Ivy 경로 환경 변수 설정
+ENV IVY_PACKAGE_DIR=/home/spark/.ivy2/jars
+
+# Spark 기본 사용자(185)로 복구
+USER 185
+
+# 6. Spark 실행 (Spark 3.5.0 및 Delta 3.0.0 버전에 맞춤)
+ENTRYPOINT [ \
+    "spark-submit", \
+    "--packages", "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,io.delta:delta-spark_2.12:3.0.0,org.apache.hadoop:hadoop-aws:3.3.4", \
+    "--conf", "spark.jars.ivy=/opt/spark/ivy_cache", \
+    "--conf", "spark.driver.extraJavaOptions=-Divy.cache.dir=/opt/spark/ivy_cache -Divy.home=/opt/spark/ivy_cache", \
+    "--conf", "spark.local.dir=/tmp/spark-temp", \
+    "--master", "spark://spark-master:7077", \
+    "/opt/spark/work/spark/clickstream_analyzer.py" \
+]
