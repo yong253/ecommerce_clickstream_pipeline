@@ -218,6 +218,8 @@ services:
     environment:
       - SPARK_MODE=worker
       - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_LOCAL_DIRS=/tmp/spark-local
+      - SPARK_WORKER_DIR=/tmp/spark-worker
       - SPARK_WORKER_MEMORY=2G
       - SPARK_WORKER_CORES=2
       - SPARK_RPC_AUTHENTICATION_ENABLED=no
@@ -246,6 +248,8 @@ services:
     environment:
       - SPARK_MODE=worker
       - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_LOCAL_DIRS=/tmp/spark-local
+      - SPARK_WORKER_DIR=/tmp/spark-worker
       - SPARK_WORKER_MEMORY=2G
       - SPARK_WORKER_CORES=2
       - SPARK_RPC_AUTHENTICATION_ENABLED=no
@@ -273,8 +277,6 @@ services:
       - REDIS_HOST=redis
       - KAFKA_BOOTSTRAP_SERVERS=kafka1:29092,kafka2:29092,kafka3:29092
       - PYTHONPATH=/opt/spark/work
-      - SPARK_LOCAL_DIRS=/tmp/spark-temp
-      - SPARK_WORKER_DIR=/tmp/spark-worker
     depends_on:
       - spark-master
       - kafka1
@@ -466,6 +468,18 @@ services:
 #      - GF_SECURITY_ADMIN_PASSWORD=admin
 #    networks:
 #      - ecommerce_pipeline_network
+  minio:
+    image: minio/minio
+    container_name: minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
 
 networks:
   ecommerce_pipeline_network:
@@ -480,3 +494,4 @@ volumes:
   postgres_data:
   pgadmin_data:
   redis_data:
+  minio_data:

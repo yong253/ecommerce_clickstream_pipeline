@@ -6,3 +6,8 @@ app-*
 airflow-webserver.pid
 airflow.cfg
 webserver_config.py
+*.ipynb
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd

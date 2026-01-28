@@ -43,10 +43,10 @@ class ClickstreamAnalyzer:
         self.raw_schema = StructType([
             StructField("event_time", StringType(), False), # 이벤트 발생 시간
             StructField("event_type", StringType(), False), # 이벤트 유형(가중치)
-            StructField("product_id", IntegerType(), False), # 상품 ID
-            StructField("category_id", LongType(), False), # 카테고리 ID
+            StructField("product_id", StringType(), False), # 상품 ID
+            StructField("category_id", StringType(), False), # 카테고리 ID
             StructField("category_code", StringType(), True), # 카테고리 code
-            StructField("user_id", LongType(), False),
+            StructField("user_id", StringType(), False),
             StructField("user_session", StringType(), True)
         ])
         logger.info("ClickstreamAnalyzer 생성기")
@@ -57,6 +57,7 @@ class ClickstreamAnalyzer:
             .appName("ClickstreamRealtimeEngine") \
             .master("spark://spark-master:7077") \
             .config("spark.sql.shuffle.partitions", "12") \
+            .config("spark.local.dir", "/tmp/spark-temp") \
             .config("spark.jars.packages", (
             "io.delta:delta-spark_2.12:3.0.0,"
             "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,"
@@ -68,6 +69,9 @@ class ClickstreamAnalyzer:
             .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
             .config("spark.hadoop.fs.s3a.aws.credentials.provider",
                     "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider") \
+            .config("spark.worker.cleanup.enabled", "true") \
+            .config("spark.worker.cleanup.interval", "1800") \
+            .config("spark.worker.cleanup.appDataTtl", "3600") \
             .getOrCreate()
 
     # --- [1. 입력: 데이터 로드] ---
@@ -80,7 +84,7 @@ class ClickstreamAnalyzer:
             .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP_SERVERS) \
             .option("subscribe", ECOMMERCE_TOPIC) \
             .option("startingOffsets", "earliest") \
-            .option("maxOffsetsPerTrigger", 50000) \
+            .option("maxOffsetsPerTrigger", 10000) \
             .load() \
             .select(F.from_json(F.col("value").cast("string"), self.raw_schema).alias("data")) \
             .select("data.*")
@@ -93,7 +97,8 @@ class ClickstreamAnalyzer:
             .withColumn("month", F.month(F.col("event_time"))) \
             .withColumn("day", F.day(F.col("event_time"))) \
             .withColumn("category_code",
-                        F.coalesce(F.split(F.col("category_code"), "\.").getItem(0), F.lit("accessories"))) \
+                        F.when((F.col("category_code").isNull()) | (F.col("category_code") == ""), F.lit("accessories"))
+                        .otherwise(F.split(F.col("category_code"), "\.").getItem(0))) \
             .withColumn("event_weight",
                         F.when(F.col("event_type") == "view", 1)
                         .when(F.col("event_type") == "cart", 3)

@@ -78,8 +78,8 @@ def s3_data_loader(bucket, key):
             yield row
 
 def kafka_send(producer, topic, bucket, key):
-    target_tps = 10 # 초당 500건
-    batch_group_size = 50 # 한번에 묶어서 쏠 단위
+    target_tps = 100 # 초당 500건
+    batch_group_size = 10 # 한번에 묶어서 쏠 단위
     # 전송 멈추는 시간. 50/500 = 0.1초
     sleep_interval = batch_group_size / target_tps
     logger.info(f"전송 시작: 초당 {target_tps}건 목표 (간격: {sleep_interval}초)")
