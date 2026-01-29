@@ -1,0 +1,12 @@
+# 대시보드 프레임워크
+streamlit==1.28.2
+
+# 데이터 처리 및 API 통신
+requests==2.31.0
+pandas==2.1.3
+
+# 시각화 보조 (선택 사항이지만 추천)
+plotly==5.18.0
+
+# 자동 갱신
+streamlit-autorefresh==0.0.1

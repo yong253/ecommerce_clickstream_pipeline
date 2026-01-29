@@ -1,0 +1,12 @@
+# 핵심 프레임워크 및 서버
+fastapi==0.104.1
+uvicorn==0.24.0
+
+# 데이터 저장소 연결 (Redis & S3)
+redis==5.0.1
+boto3==1.28.85
+
+# 환경 설정 및 유틸리티
+python-dotenv==1.0.0
+pydantic==2.4.2
+pydantic-settings==2.0.3

@@ -2,6 +2,7 @@ from airflow import DAG
 from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
 from airflow.providers.amazon.aws.sensors.s3 import S3KeySensor
 from datetime import datetime, timedelta
+from airflow.models import Connection
 
 default_args = {
     'owner': 'data_eng',
@@ -27,7 +28,7 @@ with DAG(
         poke_interval=600,
         timeout=7200
     )
-
+    aws_conn = Connection.get_connection_from_secrets('aws_default')
     # 2. 배치 집계 및 Redis 업데이트 실행
     run_batch = SparkSubmitOperator(
         task_id='execute_batch_aggregation',
@@ -38,7 +39,14 @@ with DAG(
             "{{ execution_date.strftime('%m') }}",
             "{{ execution_date.strftime('%d') }}"
         ],
-        packages="io.delta:delta-spark_2.12:3.0.0,org.apache.hadoop:hadoop-aws:3.3.4"
+        packages="io.delta:delta-spark_2.12:3.1.0,org.apache.hadoop:hadoop-aws:3.3.4",
+        conf={
+            "spark.hadoop.fs.s3a.access.key": aws_conn.login,
+            "spark.hadoop.fs.s3a.secret.key": aws_conn.password,
+            "spark.hadoop.fs.s3a.endpoint": "s3.ap-northeast-2.amazonaws.com",
+            "spark.hadoop.fs.s3a.region": "ap-northeast-2",
+            "spark.hadoop.fs.s3a.impl": "org.apache.hadoop.fs.s3a.S3AFileSystem"
+        },
     )
 
     wait_for_marker >> run_batch

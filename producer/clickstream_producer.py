@@ -10,6 +10,7 @@ import os
 import sys
 import logging
 import snappy
+from datetime import datetime
 
 # 1. 로그 디렉토리 및 파일 설정
 log_dir = "logs"
@@ -78,20 +79,50 @@ def s3_data_loader(bucket, key):
             yield row
 
 def kafka_send(producer, topic, bucket, key):
-    target_tps = 100 # 초당 500건
+    target_tps = 300 # 초 당 보낼 메시지 수
     batch_group_size = 10 # 한번에 묶어서 쏠 단위
     # 전송 멈추는 시간. 50/500 = 0.1초
     sleep_interval = batch_group_size / target_tps
     logger.info(f"전송 시작: 초당 {target_tps}건 목표 (간격: {sleep_interval}초)")
-
+    current_processing_date = None
     count = 0
     for data in s3_data_loader(bucket, key):
-        producer.send(topic, value=data)
-        count += 1
+        # ---하루에 3시간 데이터만 보내는 로직(데이터가 너무 많아서..) ---
+        event_time_str = data.get('event_time')
+        if not event_time_str:
+            continue
 
-        if count % batch_group_size == 0: # 배치 size만큼 보냈으면 잠시 휴식
-            logger.info(f"전송 완료: {count}건, 휴식: {sleep_interval}초")
-            time.sleep(sleep_interval)
+        try:
+            # 시간 파싱 (형식: "2019-10-01 00:00:05 UTC")
+            dt = datetime.strptime(event_time_str[:19], '%Y-%m-%d %H:%M:%S')
+
+            # 1. 날짜가 바뀌었는지 확인 (로그용)
+            if dt.date() != current_processing_date:
+                current_processing_date = dt.date()
+                logger.info(f"--- {current_processing_date} 데이터 처리 시작 ---")
+
+            # 2. 핵심 로직: 3시(03:00:00) 이상인 데이터는 모두 무시하고 다음 줄로 넘어감
+            if dt.hour >= 3:
+                # 데이터를 보내지 않고 다음 루프로 점프 (continue)
+                continue
+            else:
+                producer.send(topic, value=data)
+                count += 1
+
+                if count % batch_group_size == 0:  # 배치 size만큼 보냈으면 잠시 휴식
+                    logger.info(f"전송 완료: {count}건, 휴식: {sleep_interval}초")
+                    time.sleep(sleep_interval)
+
+        except Exception as e:
+            logger.error(f"시간 파싱 에러: {e}")
+            continue
+        # ---------------------------------------------------------------
+        # producer.send(topic, value=data)
+        # count += 1
+        #
+        # if count % batch_group_size == 0: # 배치 size만큼 보냈으면 잠시 휴식
+        #     logger.info(f"전송 완료: {count}건, 휴식: {sleep_interval}초")
+        #     time.sleep(sleep_interval)
     producer.flush()
 
 def main():

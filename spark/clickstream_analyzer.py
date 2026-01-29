@@ -84,7 +84,7 @@ class ClickstreamAnalyzer:
             .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP_SERVERS) \
             .option("subscribe", ECOMMERCE_TOPIC) \
             .option("startingOffsets", "earliest") \
-            .option("maxOffsetsPerTrigger", 10000) \
+            .option("maxOffsetsPerTrigger", 2000) \
             .load() \
             .select(F.from_json(F.col("value").cast("string"), self.raw_schema).alias("data")) \
             .select("data.*")
@@ -112,6 +112,7 @@ class ClickstreamAnalyzer:
             .writeStream.format("delta").outputMode("append") \
             .option("checkpointLocation", self.S3_CHK_REFINED) \
             .partitionBy("year", "month", "day") \
+            .trigger(processingTime='30 seconds') \
             .start(self.S3_REFINED_PATH)
 
     def write_user_pref_to_sinks(self, df):
@@ -142,6 +143,7 @@ class ClickstreamAnalyzer:
         return agg_df.writeStream.outputMode("update") \
             .foreachBatch(save_batch) \
             .option("checkpointLocation", self.S3_CHK_USER_CAT) \
+            .trigger(processingTime='1 minute') \
             .start()
 
     def write_top_products_to_sinks(self, df):
@@ -174,20 +176,27 @@ class ClickstreamAnalyzer:
         return agg_df.writeStream.outputMode("update") \
             .foreachBatch(save_batch) \
             .option("checkpointLocation", self.S3_CHK_CAT_PROD) \
+            .trigger(processingTime='1 minute') \
             .start()
 
     def check_and_write_s3_marker(self, batch_df):
         """S3 마감 마커 파일 (.done) 생성"""
-        max_time_row = batch_df.select(F.max("event_time")).collect()
-        if max_time_row and max_time_row[0][0]:
-            current_max = max_time_row[0][0]
-            yesterday = (current_max - timedelta(days=1)).strftime("%Y-%m-%d")
+        max_row = batch_df.select(F.max("event_time")).first()
+
+        if max_row and max_row[0]:
+            current_max = max_row[0]
             # 10분 워터마크 기준 날짜가 완전히 넘어갔는지 확인
             if (current_max - timedelta(minutes=10)).date() >= current_max.date():
                 s3 = boto3.client('s3')
-                # 마커는 보통 refined 폴더의 상위 status 폴더에 둡니다.
+                yesterday = (current_max - timedelta(days=1)).strftime("%Y-%m-%d")
                 bucket = self.S3_REFINED_PATH.split("/")[2]
-                s3.put_object(Bucket=bucket, Key=f"status/streaming_done_{yesterday}.done", Body='')
+
+                # S3에 빈 파일 생성
+                s3.put_object(
+                    Bucket=bucket,
+                    Key=f"status/streaming_done_{yesterday}.done",
+                    Body=''
+                )
 
     # --- [Step 3: 실행 컨트롤러] ---
     def run(self):

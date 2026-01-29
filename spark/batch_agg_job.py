@@ -6,7 +6,7 @@ from pyspark.sql import functions as F
 
 # Redis 저장 로직
 def save_to_redis(partition):
-    r = redis.Redis(host='localhost', port=6379, db=0)
+    r = redis.Redis(host='redis', port=6379, db=0)
     pipe = r.pipeline()
     for row in partition:
         if 'user_id' in row: # 유저 선호도
@@ -22,6 +22,7 @@ def save_to_redis(partition):
 def run_daily_batch(y, m, d):
     spark = SparkSession.builder \
         .appName(f"Batch_Agg_{y}{m}{d}") \
+        .master("spark://spark-master:7077") \
         .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
         .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
         .getOrCreate()
@@ -31,7 +32,7 @@ def run_daily_batch(y, m, d):
     d2 = (target_date - timedelta(days=2)).strftime("%Y-%m-%d") # 그저께
     d3 = (target_date - timedelta(days=3)).strftime("%Y-%m-%d") # 3일전
 
-    base_path = "s3a://ecommerce-datalake/refined/events"
+    base_path = "s3a://ecommerce-datalake-yong/refined/events"
     df = spark.read.format("delta").load(base_path) \
         .filter(F.col("event_time").cast("date").isin(d1, d2, d3))
 
@@ -46,7 +47,8 @@ def run_daily_batch(y, m, d):
     # --- [2] 카테고리별 상품 순위 (하루 전 데이터만) ---
     prod_rank = df.filter(F.col("event_time").cast("date") == d1) \
         .groupBy("category_code", "product_id").agg(F.sum("event_weight").alias("daily_score"))
-
+    print(f"DEBUG: user_pref count is {user_pref.count()}")
+    print(f"DEBUG: prod_rank count is {prod_rank.count()}")
     user_pref.foreachPartition(save_to_redis)
     prod_rank.foreachPartition(save_to_redis)
 

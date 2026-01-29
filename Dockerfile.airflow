@@ -1,15 +1,17 @@
-FROM apache/airflow:2.7.1-python3.10
+FROM apache/airflow:2.7.1-python3.8
 
 USER root
-# Docker 연동을 위한 패키지 설치
 RUN apt-get update && apt-get install -y openjdk-17-jdk-headless procps docker.io && apt-get clean && rm -rf /var/lib/apt/lists/*
 RUN groupadd -g 999 docker || true && usermod -aG docker airflow
 
 USER airflow
-# Airflow 2.7.1 / Python 3.10용 공식 제약 조건 URL
-ARG CONSTRAINTS_URL="https://raw.githubusercontent.com/apache/airflow/constraints-2.7.1/constraints-3.10.txt"
+ARG CONSTRAINTS_URL="https://raw.githubusercontent.com/apache/airflow/constraints-2.7.1/constraints-3.8.txt"
 ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
 
 COPY requirements.txt .
-# 제약 조건을 참조하여 requirements.txt 설치
+
+RUN sed -i 's/pandas==2.1.0/pandas/g' requirements.txt
+
 RUN pip install --no-cache-dir --user -r requirements.txt --constraint "${CONSTRAINTS_URL}"
+
+RUN pip install --no-cache-dir --user --upgrade pyspark==3.5.0 delta-spark==3.0.0

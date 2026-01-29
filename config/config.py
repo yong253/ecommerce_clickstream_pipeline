@@ -9,8 +9,8 @@ Ecommerce Clickstream Pipeline 프로젝트에서 사용되는 설정 값들을 
 import os
 from dotenv import load_dotenv
 
-# .env 파일 로드 (존재하는 경우)
-env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env')
+# .env222 파일 로드 (존재하는 경우)
+env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env222')
 if os.path.exists(env_path):
     load_dotenv(env_path)
 
